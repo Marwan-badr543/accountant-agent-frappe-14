@@ -36,9 +36,3 @@ An AI-powered accounting assistant app integrated directly into your Frappe & ER
    bench build
    bench restart
    ```
-
----
-
-## Configuration
-
-The default Accountant Agent server URL is set to `http://127.0.0.1:4000`. You can configure this or verify limits in ERPNext by opening the **Agent Settings** list.
