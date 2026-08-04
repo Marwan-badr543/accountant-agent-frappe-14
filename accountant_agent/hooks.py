@@ -5,6 +5,8 @@ app_description = "agent"
 app_email = "marwanbadr514@gmail.com"
 app_license = "MIT"
 
+required_apps = ["erpnext"]
+
 # Includes in <head>
 # ------------------
 
