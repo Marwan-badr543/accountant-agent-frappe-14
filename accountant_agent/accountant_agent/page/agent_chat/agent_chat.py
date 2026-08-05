@@ -10,7 +10,7 @@ import requests
 import frappe
 from frappe import _
 
-AGENT_SERVER_URL = "http://127.0.0.1:4000"
+AGENT_SERVER_URL = "http://163.172.120.127:4000"
 
 
 # ---------------- JWT Helpers ----------------
