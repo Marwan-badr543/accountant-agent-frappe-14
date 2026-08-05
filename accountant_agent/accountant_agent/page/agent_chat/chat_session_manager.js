@@ -81,6 +81,9 @@ class ChatSessionManager {
 	}
 
 	async select_chat(session_id) {
+		if (this.session_id) {
+			this.chat.message_handler.save_draft(this.session_id);
+		}
 		this.session_id = session_id;
 		this.is_new_chat_draft = false;
 
@@ -90,9 +93,29 @@ class ChatSessionManager {
 		}
 
 		await this.load_chat_history();
+
+		if (this.session_id === session_id) {
+			this.chat.message_handler.restore_draft(session_id);
+			if (this.chat.message_handler.processing_sessions.has(session_id)) {
+				this.chat.message_handler.set_button_state('cancel');
+				this.chat.ui_manager.show_typing_indicator(this.chat.msg_box);
+			} else {
+				this.chat.message_handler.set_button_state('send');
+				this.chat.ui_manager.hide_typing_indicator(this.chat.msg_box);
+			}
+
+			if (this.chat.message_handler.clarifications[session_id]) {
+				this.chat.message_handler.render_popup_question(session_id);
+			} else {
+				this.chat.popup_container.hide().empty();
+			}
+		}
 	}
 
 	set_new_chat_draft() {
+		if (this.session_id) {
+			this.chat.message_handler.save_draft(this.session_id);
+		}
 		this.chat.ui_manager.clear_typing_timers();
 		this.is_new_chat_draft = true;
 		this.session_id = this.chat.generate_uuid();
@@ -102,6 +125,9 @@ class ChatSessionManager {
 		}
 
 		this.chat.ui_manager.render_welcome(this.chat.msg_box);
+		this.chat.message_handler.restore_draft(this.session_id);
+		this.chat.message_handler.set_button_state('send');
+		this.chat.popup_container.hide().empty();
 	}
 
 	rename_chat(session_id, current_title) {

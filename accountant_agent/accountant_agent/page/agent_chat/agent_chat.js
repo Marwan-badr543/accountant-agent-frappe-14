@@ -35,9 +35,8 @@ class AccountantAgentChat {
 		this.message_handler = new ChatMessageHandler(this);
 
 		frappe.realtime.on("agent_clarification_requested", (data) => {
-			if (data && data.session_id === this.session_manager.session_id) {
-				this.ui_manager.hide_typing_indicator(this.msg_box);
-				this.show_clarification_popup(data.questions);
+			if (data && data.session_id) {
+				this.message_handler.show_clarification_popup(data.questions, data.session_id);
 			}
 		});
 
