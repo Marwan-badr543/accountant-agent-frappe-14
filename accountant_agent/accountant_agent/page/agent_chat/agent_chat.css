@@ -16,11 +16,7 @@
 	--chat-font: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Prevent horizontal and vertical scroll on the agent-chat page wrapper */
-[data-page-route="agent-chat"],
-#page-agent-chat {
-	overflow: hidden !important;
-}
+
 
 /* Page container layout */
 .agent-chat-container {
