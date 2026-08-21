@@ -56,7 +56,10 @@ class FileUploadHandler {
 			</button>
 		`);
 
-		let $flex_row = this.$container.find('div[style*="display: flex"]').first();
+		let $flex_row = this.$container.find('.agent-input-footer-left').first();
+		if (!$flex_row.length) {
+			$flex_row = this.$container.find('div[style*="display: flex"]').first();
+		}
 		if ($flex_row.length) {
 			$flex_row.prepend(this.$attach_btn);
 		}
@@ -69,7 +72,10 @@ class FileUploadHandler {
 			</div>
 		`);
 
-		let $flex_row = this.$container.find('div[style*="display: flex"]').first();
+		let $flex_row = this.$container.find('.agent-input-footer').first();
+		if (!$flex_row.length) {
+			$flex_row = this.$container.find('div[style*="display: flex"]').first();
+		}
 		if ($flex_row.length) {
 			$flex_row.before(this.$preview_area);
 		}

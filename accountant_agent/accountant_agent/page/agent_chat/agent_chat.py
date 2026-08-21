@@ -10,8 +10,9 @@ import requests
 import frappe
 from frappe import _
 
-AGENT_SERVER_URL = "http://163.172.120.127:4000"
-
+from accountant_agent.accountant_agent.doctype.agent_settings.agent_settings import (
+	get_agent_server_url,
+)
 
 # ---------------- JWT Helpers ----------------
 
@@ -45,7 +46,7 @@ def register_agent_on_server(email: str, password: str, company_name: str, api_k
 		"company_url": frappe.utils.get_url()
 	}
 	try:
-		response = requests.post(f"{AGENT_SERVER_URL}/users/", json=payload, timeout=15)
+		response = requests.post(f"{get_agent_server_url()}/users/", json=payload, timeout=15)
 		if response.status_code != 201:
 			error_msg = response.json().get("detail", "Registration failed.")
 			frappe.throw(_(f"Agent Server Error: {error_msg}"))
@@ -61,7 +62,7 @@ def login_agent_on_server(email: str, password: str) -> str:
 		"password": password
 	}
 	try:
-		response = requests.post(f"{AGENT_SERVER_URL}/auth/login", json=login_payload, timeout=15)
+		response = requests.post(f"{get_agent_server_url()}/auth/login", json=login_payload, timeout=15)
 		if response.status_code != 200:
 			error_msg = response.json().get("detail", "Login failed. Check your email and password.")
 			frappe.throw(_(f"Agent Server Error: {error_msg}"))
@@ -79,7 +80,7 @@ def refresh_agent_token_on_server(access_token: str) -> str:
 		"access_token": access_token
 	}
 	try:
-		response = requests.post(f"{AGENT_SERVER_URL}/auth/refresh", json=refresh_payload, timeout=15)
+		response = requests.post(f"{get_agent_server_url()}/auth/refresh", json=refresh_payload, timeout=15)
 		if response.status_code == 200:
 			return response.json().get("access_token")
 	except Exception as e:
@@ -219,7 +220,7 @@ def post_message_to_agent(
 
 		# Route request directly to specific endpoint based on agent_type
 		agent_endpoint = agent_type if agent_type in ("ask", "analyse", "audit") else "ask"
-		endpoint_url = f"{AGENT_SERVER_URL}/agent/{agent_endpoint}"
+		endpoint_url = f"{get_agent_server_url()}/agent/{agent_endpoint}"
 
 		return requests.post(
 			endpoint_url,
@@ -425,7 +426,7 @@ def cancel_agent(session_id, agent_email):
 		"session_id": session_id
 	}
 	try:
-		response = requests.post(f"{AGENT_SERVER_URL}/agent/cancel", json=payload, headers=headers, timeout=15)
+		response = requests.post(f"{get_agent_server_url()}/agent/cancel", json=payload, headers=headers, timeout=15)
 		
 		# Handle expired token (401)
 		if response.status_code == 401:
@@ -433,7 +434,7 @@ def cancel_agent(session_id, agent_email):
 			if new_access_token:
 				save_agent_settings(agent_email, access_token=new_access_token)
 				headers["Authorization"] = f"Bearer {new_access_token}"
-				response = requests.post(f"{AGENT_SERVER_URL}/agent/cancel", json=payload, headers=headers, timeout=15)
+				response = requests.post(f"{get_agent_server_url()}/agent/cancel", json=payload, headers=headers, timeout=15)
 			else:
 				# Clear invalid token to force re-login
 				save_agent_settings(agent_email, access_token="")
@@ -504,7 +505,7 @@ def delete_agent_account(agent_email):
 
 			if user_id:
 				try:
-					response = requests.delete(f"{AGENT_SERVER_URL}/users/{user_id}", timeout=15)
+					response = requests.delete(f"{get_agent_server_url()}/users/{user_id}", timeout=15)
 					if response.status_code not in (200, 404):
 						error_msg = response.json().get("detail", "Failed to delete account on Agent Server.")
 						frappe.throw(_(f"Agent Server Error: {error_msg}"))
@@ -657,9 +658,39 @@ def _parse_json_list(value) -> list | None:
 
 AGENT_UPLOAD_DIR = "agent_uploads"
 MAX_UPLOAD_SIZE_BYTES: int = 20 * 1024 * 1024  # 20 MB endpoint cap to support Excel uploads
+#: MUST EQUAL THE PLATFORM'S `file_text_receiver.ALLOWED_EXTENSIONS`.
+#:
+#: The picker only decides what the file dialog offers; the refusal that matters
+#: happens on the agent platform. An extension offered here but absent there is
+#: not a lenient picker - it is an accountant choosing a file, waiting for the
+#: upload, and then being told it is not supported.
+#:
+#: This list had drifted in both directions. It offered the legacy Office
+#: binaries (.doc .xls .ppt), which the platform refuses on purpose - the modern
+#: container is XML and macro-free, the 1997 binary is neither - and it withheld
+#: every banking interchange format the platform reads (.ofx .qfx .qbo .qif
+#: .mt940 .sta .camt .aba .bai .bai2 .edi .x12 .iif .xbrl .ubl), so an
+#: accountant could not attach the bank export this product exists to reconcile.
+#:
+#: api/tests/test_upload_types.py::test_the_picker_and_the_server_agree fails if
+#: the two sets ever separate again.
 ALLOWED_ACCOUNTANT_EXTENSIONS: set = {
-	".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".txt",
-	".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".gif", ".webp"
+	# Portable documents and word processing, macro-free formats only
+	".pdf", ".docx", ".odt",
+	# Spreadsheets, macro-free formats only
+	".xlsx", ".ods",
+	# Presentations, macro-free formats only
+	".pptx", ".odp",
+	# Plain text, notes and structured data
+	".txt", ".md", ".markdown", ".csv", ".tsv", ".psv", ".dat",
+	".json", ".jsonl", ".ndjson", ".xml",
+	# Accounting and banking interchange formats
+	".ofx", ".qfx", ".qbo", ".qif", ".mt940", ".sta", ".camt", ".aba",
+	".bai", ".bai2", ".edi", ".x12", ".iif", ".xbrl", ".ubl",
+	# Scans and photographed receipts. Exactly the set the platform's vision
+	# path decodes - an image accepted here but absent there is stored and
+	# then silently unreadable.
+	".png", ".jpg", ".jpeg", ".gif", ".webp",
 }
 
 

@@ -1,3 +1,10 @@
+{% include "accountant_agent/accountant_agent/page/agent_chat/agent_selector.js" %}
+{% include "accountant_agent/accountant_agent/page/agent_chat/file_upload_handler.js" %}
+{% include "accountant_agent/accountant_agent/page/agent_chat/chat_attachments_renderer.js" %}
+{% include "accountant_agent/accountant_agent/page/agent_chat/chat_ui_manager.js" %}
+{% include "accountant_agent/accountant_agent/page/agent_chat/chat_session_manager.js" %}
+{% include "accountant_agent/accountant_agent/page/agent_chat/chat_message_handler.js" %}
+
 frappe.pages['agent-chat'].on_page_load = function (wrapper) {
 	let page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -5,16 +12,10 @@ frappe.pages['agent-chat'].on_page_load = function (wrapper) {
 		single_column: true
 	});
 
-	frappe.require([
-		'assets/accountant_agent/js/agent_selector.js',
-		'assets/accountant_agent/js/file_upload_handler.js',
-		'assets/accountant_agent/js/chat_attachments_renderer.js',
-		'assets/accountant_agent/js/chat_ui_manager.js',
-		'assets/accountant_agent/js/chat_session_manager.js',
-		'assets/accountant_agent/js/chat_message_handler.js'
-	], () => {
-		new AccountantAgentChat(wrapper, page);
-	});
+	// Add blinking dot to the left of the page title
+	$(wrapper).find('.title-text').prepend('<span class="agent-title-dot"></span>');
+
+	new AccountantAgentChat(wrapper, page);
 };
 
 class AccountantAgentChat {
