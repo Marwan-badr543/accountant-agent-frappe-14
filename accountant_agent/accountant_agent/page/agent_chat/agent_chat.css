@@ -16,17 +16,17 @@
 	--chat-font: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Prevent horizontal scroll on the agent-chat page wrapper */
+/* Prevent horizontal and vertical scroll on the agent-chat page wrapper */
 [data-page-route="agent-chat"],
 #page-agent-chat {
-	overflow-x: hidden !important;
+	overflow: hidden !important;
 }
 
 /* Page container layout */
 .agent-chat-container {
 	display: flex;
 	flex-direction: column;
-	height: calc(100vh - 130px);
+	height: calc(100vh - 165px);
 	max-width: 1100px;
 	margin: 15px auto;
 	padding: 10px;
