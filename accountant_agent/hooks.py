@@ -1,11 +1,25 @@
 app_name = "accountant_agent"
 app_title = "Accountant Agent"
 app_publisher = "Marwan Badr"
-app_description = "agent"
-app_email = "marwanbadr514@gmail.com"
-app_license = "MIT"
+app_description = "acc agent"
+app_email = "marwanbadr@gmail.com"
+app_license = "mit"
+
+# Apps
+# ------------------
 
 required_apps = ["erpnext"]
+
+# Each item in the list will be shown as an app in the apps page
+# add_to_apps_screen = [
+# 	{
+# 		"name": "accountant_agent",
+# 		"logo": "/assets/accountant_agent/logo.png",
+# 		"title": "Accountant Agent",
+# 		"route": "/accountant_agent",
+# 		"has_permission": "accountant_agent.api.permission.has_app_permission"
+# 	}
+# ]
 
 # Includes in <head>
 # ------------------
@@ -33,6 +47,11 @@ required_apps = ["erpnext"]
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
+
+# Svg Icons
+# ------------------
+# include app icons in desk
+# app_include_icons = "accountant_agent/public/icons.svg"
 
 # Home Pages
 # ----------
@@ -63,8 +82,20 @@ required_apps = ["erpnext"]
 # Installation
 # ------------
 
+# Provisioning for the Accountant Agent's ERP identity.
+#
+# Both hooks point at the same idempotent routine on purpose: after_install
+# provisions a fresh site, after_migrate repairs a site that was installed
+# before this module existed or had the agent user removed. Every step is
+# get-or-create, so re-running changes nothing on a healthy site.
+#
+# What it creates: a permission-less "Accountant Agent" role, an agent User
+# holding only that role, and a disabled Agent Write Policy. The agent is
+# provisioned but completely inert until a System Manager enables it.
+after_install = "accountant_agent.install.after_install"
+after_migrate = "accountant_agent.install.after_migrate"
+
 # before_install = "accountant_agent.install.before_install"
-# after_install = "accountant_agent.install.after_install"
 
 # Uninstallation
 # ------------
@@ -129,23 +160,18 @@ required_apps = ["erpnext"]
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"accountant_agent.tasks.all"
-# 	],
-# 	"daily": [
-# 		"accountant_agent.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"accountant_agent.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"accountant_agent.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"accountant_agent.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": [
+		"accountant_agent.agent_api.services.agent_api_service.cleanup_old_files"
+	],
+	"daily": [
+		# Alerts on Agent Write Log rows stuck IN_FLIGHT. These should be
+		# impossible - the reservation and its commit share one transaction - so
+		# a survivor is an invariant violation worth an error log, never a quiet
+		# cleanup that would destroy the only evidence of the bug.
+		"accountant_agent.agent_api.services.agent_write_service.alert_on_stranded_in_flight"
+	],
+}
 
 # Testing
 # -------
@@ -215,3 +241,16 @@ required_apps = ["erpnext"]
 # auth_hooks = [
 # 	"accountant_agent.auth.validate"
 # ]
+
+# Automatically update python controller files with type annotations for this app.
+# export_python_type_annotations = True
+
+# default_log_clearing_doctypes = {
+# 	"Logging DocType Name": 30  # days to retain logs
+# }
+
+# Translation
+# ------------
+# List of apps whose translatable strings should be excluded from this app's translations.
+# ignore_translatable_strings_from = []
+

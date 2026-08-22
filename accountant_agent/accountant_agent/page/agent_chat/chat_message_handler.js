@@ -111,7 +111,6 @@ class ChatMessageHandler {
 		let session_id = this.chat.session_manager.session_id;
 		if (!session_id) return;
 
-		message = frappe.utils.xss_sanitise(message);
 		let active_session_id = session_id;
 
 		// Handle unsaved draft
@@ -129,6 +128,7 @@ class ChatMessageHandler {
 				if (this.chat.session_manager.session_id === active_session_id) {
 					this.chat.session_manager.is_new_chat_draft = false;
 				}
+				await this.chat.session_manager.load_chats(false);
 			} catch (e) {
 				console.error("Failed to initialize chat session:", e);
 				frappe.dom.unfreeze();
@@ -138,23 +138,46 @@ class ChatMessageHandler {
 			}
 		}
 
+		let sanitised_message = message;
+
 		if (this.chat.session_manager.session_id === active_session_id) {
-			if (!message.startsWith || !message.startsWith("Clarification Response:")) {
+			if (message !== "Approve" && (!message.startsWith || !message.startsWith("Clarification Response:"))) {
 				this.chat.ui_manager.append_message(this.chat.msg_box, 'user', message, false, new Date().toISOString());
 			}
-			this.chat.ui_manager.show_typing_indicator(this.chat.msg_box);
+
+			// Sanitise for backend storage and network requests
+			sanitised_message = frappe.utils.xss_sanitise(message);
+			
+			// Initialize the stream bubble immediately with "Thinking..." status
+			let stream_id = `stream-${this.chat.generate_uuid()}`;
+			this.chat.active_streams = this.chat.active_streams || {};
+			this.chat.active_streams[active_session_id] = {
+				bubble_id: stream_id,
+				accumulated: "",
+				reasoning: "",
+				steps: [{ name: __("Thinking..."), type: 'node' }],
+				status: __("Thinking..."),
+				start_time: Date.now(),
+				elapsed_seconds: 0
+			};
+			this.chat.start_stream_timer(active_session_id);
+			
+			this.chat.ui_manager.create_stream_bubble(this.chat.msg_box, stream_id, active_session_id);
+			this.chat.ui_manager.update_stream_status(this.chat.msg_box, stream_id, __("Thinking..."), [{ name: __("Thinking..."), type: 'node' }]);
 			this.set_button_state('cancel');
 		}
 
 		this.processing_sessions.add(active_session_id);
-		let agent_type = this.chat.agent_selector ? this.chat.agent_selector.get_selected_agent() : 'ask';
+		// Falls back to 'auto', never to a named desk: without a selector the
+		// server should choose, not be told the general Q&A desk was asked for.
+		let agent_type = this.chat.agent_selector ? this.chat.agent_selector.get_selected_agent() : 'auto';
 
 		try {
 			let agent_email = localStorage.getItem('connected_agent_email');
 			let res = await frappe.xcall(
 				'accountant_agent.accountant_agent.page.agent_chat.agent_chat.send_message',
 				{
-					message: message,
+					message: sanitised_message,
 					session_id: active_session_id,
 					agent_email: agent_email,
 					agent_type: agent_type,
@@ -168,11 +191,30 @@ class ChatMessageHandler {
 			}
 
 			if (this.chat.session_manager.session_id === active_session_id) {
-				this.chat.ui_manager.hide_typing_indicator(this.chat.msg_box);
+				if (res && res.status === 'queued') {
+					// Bubble and timer are already running, render background sidebar list and return
+					this.chat.session_manager.render_chat_list();
+					return;
+				}
+
 				this.set_button_state('send');
 				if (res && res.response) {
 					await this.chat.session_manager.load_chats(false);
-					await this.chat.ui_manager.append_message(this.chat.msg_box, 'ai', res.response, true, new Date().toISOString());
+					
+					// If completed synchronously without streaming, finalize the existing stream bubble
+					if (this.chat.active_streams && this.chat.active_streams[active_session_id]) {
+						let stream = this.chat.active_streams[active_session_id];
+						this.chat.ui_manager.finalize_stream_bubble(
+							this.chat.msg_box,
+							stream.bubble_id,
+							res.response,
+							new Date().toISOString(),
+							__("Completed")
+						);
+						delete this.chat.active_streams[active_session_id];
+					} else {
+						await this.chat.ui_manager.append_message(this.chat.msg_box, 'ai', res.response, true, new Date().toISOString());
+					}
 				} else {
 					await this.chat.session_manager.load_chats(false);
 				}
@@ -186,13 +228,24 @@ class ChatMessageHandler {
 			}
 
 			if (this.chat.session_manager.session_id === active_session_id) {
-				this.chat.ui_manager.hide_typing_indicator(this.chat.msg_box);
 				this.set_button_state('send');
 				console.error("Message send failed:", err);
 				let error_msg = err.message || '';
 				if (!error_msg.includes('cancelled') && !error_msg.includes('cancellation')) {
-					let final_err = error_msg || __('Unable to get response from Accountant Agent.');
-					this.chat.ui_manager.append_message(this.chat.msg_box, 'ai', `⚠️ **Error:** ${final_err}`);
+					let final_err = error_msg || __('Unable to get response from Razyn.');
+					if (this.chat.active_streams && this.chat.active_streams[active_session_id]) {
+						let stream = this.chat.active_streams[active_session_id];
+						this.chat.ui_manager.finalize_stream_bubble(
+							this.chat.msg_box,
+							stream.bubble_id,
+							`⚠️ **Error:** ${final_err}`,
+							new Date().toISOString(),
+							__("Failed")
+						);
+						delete this.chat.active_streams[active_session_id];
+					} else {
+						this.chat.ui_manager.append_message(this.chat.msg_box, 'ai', `⚠️ **Error:** ${final_err}`);
+					}
 				}
 			}
 		} finally {
@@ -215,6 +268,7 @@ class ChatMessageHandler {
 			btn.prop('disabled', false).css('opacity', 1);
 			this.chat.textarea.prop('disabled', false);
 			this.chat.textarea.focus();
+			this.chat.textarea.trigger('input');
 		}
 	}
 
@@ -226,6 +280,20 @@ class ChatMessageHandler {
 		if (!agent_email) return;
 
 		this.cancelled_sessions.add(session_id);
+		this.chat.stop_stream_timer(session_id);
+
+		if (this.chat.active_streams && this.chat.active_streams[session_id]) {
+			let stream = this.chat.active_streams[session_id];
+			this.chat.ui_manager.finalize_stream_bubble(
+				this.chat.msg_box,
+				stream.bubble_id,
+				`⚠️ **Cancelled**`,
+				new Date().toISOString(),
+				__("Cancelled")
+			);
+			delete this.chat.active_streams[session_id];
+		}
+
 		this.chat.ui_manager.hide_typing_indicator(this.chat.msg_box);
 
 		if (this.chat.popup_container) {
@@ -233,6 +301,7 @@ class ChatMessageHandler {
 		}
 
 		this.set_button_state('send');
+		this.chat.session_manager.render_chat_list();
 
 		frappe.xcall(
 			'accountant_agent.accountant_agent.page.agent_chat.agent_chat.cancel_agent',

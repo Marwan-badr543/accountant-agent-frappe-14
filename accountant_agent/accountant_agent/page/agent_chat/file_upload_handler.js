@@ -5,11 +5,13 @@
  * file uploading to the Frappe server, and agent-specific file size/type validation.
  *
  * Rules:
- *   - Max 5 files per request across all file types.
  *   - Whitelisted safe file extensions only (accountant safe types).
- *   - Ask Agent: Max 1 MB per file (all file types including Excel).
- *   - Analyse / Audit Agents: Max 15 MB aggregate total for non-Excel files,
- *     and max 20 MB aggregate total for Excel files (.xlsx, .xls).
+ *   - File count and size budgets come from the selected agent's entry in
+ *     AgentSelector.AGENT_DEFINITIONS, which mirrors that agent's AgentSettings
+ *     on the server. Adding an agent therefore needs no change to this file.
+ *   - Agents with is_aggregate = false (Auto) enforce a per-file ceiling.
+ *     Agents with is_aggregate = true enforce separate aggregate budgets for
+ *     Excel and non-Excel attachments.
  */
 
 class FileUploadHandler {
@@ -26,14 +28,46 @@ class FileUploadHandler {
 		// Processing lock
 		this.is_processing = false;
 
-		// Safe accountant file extensions whitelist
+		// Every document, data and image type an accountant legitimately
+		// sends, and nothing that carries executable code.
+		//
+		// This list MUST stay in step with ALLOWED_ACCOUNTANT_EXTENSIONS in
+		// agent_chat.py. That is the one that actually protects the server;
+		// this one exists so the file picker filters sensibly and a refusal
+		// happens before a 100 MB upload rather than after it.
+		//
+		// Deliberately absent: source and script files, executables, and
+		// macro-enabled Office formats (.xlsm .xlsb .docm .pptm), which are
+		// spreadsheets that run code when opened. Also absent is markup a
+		// browser executes (.html .svg), because rendering is execution.
 		this.ALLOWED_EXTENSIONS = new Set([
-			'.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.txt',
-			'.pptx', '.ppt', '.png', '.jpg', '.jpeg', '.gif', '.webp'
+			// Portable documents and word processing
+			'.pdf', '.doc', '.docx', '.odt', '.rtf',
+			// Spreadsheets, macro-free
+			'.xls', '.xlsx', '.ods',
+			// Presentations
+			'.ppt', '.pptx', '.odp',
+			// Plain text, notes and structured data
+			'.txt', '.md', '.markdown', '.rst', '.log', '.csv', '.tsv', '.psv',
+			'.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini',
+			'.cfg', '.conf', '.xml',
+			// Accounting and banking interchange formats
+			'.ofx', '.qfx', '.qbo', '.qif', '.mt940', '.sta', '.camt', '.aba',
+			'.bai', '.bai2', '.edi', '.x12', '.iif', '.xbrl', '.ubl', '.dat',
+			// Correspondence attached as evidence
+			'.eml', '.msg', '.mbox', '.ics', '.vcf',
+			// Images and scans
+			'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff',
+			'.heic', '.heif', '.avif',
+			// Unpacked server-side; only permitted types inside survive.
+			'.zip'
 		]);
 
-		this.EXCEL_EXTENSIONS = new Set(['.xlsx', '.xls']);
-		this.IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+		this.EXCEL_EXTENSIONS = new Set(['.xlsx', '.xls', '.ods']);
+		this.IMAGE_EXTENSIONS = new Set([
+			'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff',
+			'.heic', '.heif', '.avif'
+		]);
 	}
 
 	// ─── Initialization ────────────────────────────────────────────────────
@@ -142,16 +176,32 @@ class FileUploadHandler {
 	}
 
 	/**
-	 * Validates candidate file batch against selected agent type rules.
+	 * Validates candidate file batch against the selected agent's rules.
+	 *
+	 * Limits are read from AgentSelector.AGENT_DEFINITIONS rather than repeated
+	 * here. They were previously hardcoded, which let the page/ and public/
+	 * copies of this file drift apart (10 MB vs 15 MB for the same agent) and
+	 * meant every new agent silently inherited the wrong budget.
 	 */
 	_validate_batch(incoming_files) {
-		let agent_type = this.chat && this.chat.agent_selector ? this.chat.agent_selector.get_selected_agent() : 'ask';
+		let selector = this.chat && this.chat.agent_selector ? this.chat.agent_selector : null;
+		let agent_type = selector ? selector.get_selected_agent() : 'ask';
 
-		// 1. Total file count check (max 5)
+		// Fall back to the most restrictive profile if the selector is missing,
+		// so a UI failure can never widen an upload budget.
+		let rules = (selector && typeof selector.get_rules === 'function' && selector.get_rules())
+			|| { max_files: 5, max_per_file_mb: 1, max_non_excel_total_mb: 1, max_excel_total_mb: 1, is_aggregate: false };
+
+		let agent_name = (selector && selector.AGENT_DEFINITIONS && selector.AGENT_DEFINITIONS[agent_type])
+			? selector.AGENT_DEFINITIONS[agent_type].name
+			: agent_type;
+
+		// 1. Total file count
 		let total_count = this.pending_attachments.length + incoming_files.length;
-		if (total_count > 5) {
+		if (total_count > rules.max_files) {
 			frappe.show_alert({
-				message: __(`Maximum 5 files allowed per request. You currently have ${this.pending_attachments.length} attached and tried to add ${incoming_files.length}.`),
+				message: __('Maximum {0} files allowed for {1}. You currently have {2} attached and tried to add {3}.',
+					[rules.max_files, agent_name, this.pending_attachments.length, incoming_files.length]),
 				indicator: 'orange'
 			}, 7);
 			return false;
@@ -162,65 +212,67 @@ class FileUploadHandler {
 			if (!this._is_allowed_type(file.name)) {
 				let ext = this._get_file_ext(file.name);
 				frappe.show_alert({
-					message: __(`File "${file.name}" has unpermitted type (${ext}). Only standard accounting document types are allowed.`),
+					message: __('File "{0}" has unpermitted type ({1}). Only standard accounting document types are allowed.',
+						[file.name, ext]),
 					indicator: 'red'
 				}, 7);
 				return false;
 			}
 		}
 
-		// 3. Size validation per agent mode
-		if (agent_type === 'ask') {
-			// Ask agent: Each individual file must not exceed 1 MB
-			let max_bytes = 1 * 1024 * 1024;
+		// 3. Size validation
+		if (!rules.is_aggregate) {
+			// Per-file budget (Auto agent).
+			let max_bytes = rules.max_per_file_mb * 1024 * 1024;
 			for (let file of incoming_files) {
 				if (file.size > max_bytes) {
 					frappe.show_alert({
-						message: __(`"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(2)} MB. For Auto Agent, each file must not exceed 1 MB.`),
+						message: __('"{0}" is {1} MB. For {2}, each file must not exceed {3} MB.',
+							[file.name, (file.size / (1024 * 1024)).toFixed(2), agent_name, rules.max_per_file_mb]),
 						indicator: 'orange'
 					}, 7);
 					return false;
 				}
 			}
-		} else {
-			// Analyse / Audit agents: aggregate budgets
-			// Non-Excel total <= 15 MB, Excel total <= 20 MB
-			let current_non_excel = 0;
-			let current_excel = 0;
+			return true;
+		}
 
-			this.pending_attachments.forEach(att => {
-				if (att.is_excel) current_excel += att.size;
-				else current_non_excel += att.size;
-			});
+		// Aggregate budgets, tracked separately for Excel and non-Excel.
+		let current_non_excel = 0;
+		let current_excel = 0;
+		this.pending_attachments.forEach(att => {
+			if (att.is_excel) current_excel += att.size;
+			else current_non_excel += att.size;
+		});
 
-			let new_non_excel = 0;
-			let new_excel = 0;
+		let new_non_excel = 0;
+		let new_excel = 0;
+		for (let file of incoming_files) {
+			if (this._is_excel(file.name)) new_excel += file.size;
+			else new_non_excel += file.size;
+		}
 
-			for (let file of incoming_files) {
-				if (this._is_excel(file.name)) new_excel += file.size;
-				else new_non_excel += file.size;
-			}
+		let max_non_excel_bytes = rules.max_non_excel_total_mb * 1024 * 1024;
+		let max_excel_bytes = rules.max_excel_total_mb * 1024 * 1024;
 
-			let max_non_excel_bytes = 15 * 1024 * 1024;
-			let max_excel_bytes = 20 * 1024 * 1024;
+		if ((current_non_excel + new_non_excel) > max_non_excel_bytes) {
+			let total_mb = ((current_non_excel + new_non_excel) / (1024 * 1024)).toFixed(2);
+			frappe.show_alert({
+				message: __('Total non-Excel files ({0} MB) exceed the {1} MB aggregate limit for {2}.',
+					[total_mb, rules.max_non_excel_total_mb, agent_name]),
+				indicator: 'orange'
+			}, 7);
+			return false;
+		}
 
-			if ((current_non_excel + new_non_excel) > max_non_excel_bytes) {
-				let total_mb = ((current_non_excel + new_non_excel) / (1024 * 1024)).toFixed(2);
-				frappe.show_alert({
-					message: __(`Total non-Excel files (${total_mb} MB) exceed the 15 MB aggregate limit.`),
-					indicator: 'orange'
-				}, 7);
-				return false;
-			}
-
-			if ((current_excel + new_excel) > max_excel_bytes) {
-				let total_mb = ((current_excel + new_excel) / (1024 * 1024)).toFixed(2);
-				frappe.show_alert({
-					message: __(`Total Excel files (${total_mb} MB) exceed the 20 MB aggregate limit.`),
-					indicator: 'orange'
-				}, 7);
-				return false;
-			}
+		if ((current_excel + new_excel) > max_excel_bytes) {
+			let total_mb = ((current_excel + new_excel) / (1024 * 1024)).toFixed(2);
+			frappe.show_alert({
+				message: __('Total Excel files ({0} MB) exceed the {1} MB aggregate limit for {2}.',
+					[total_mb, rules.max_excel_total_mb, agent_name]),
+				indicator: 'orange'
+			}, 7);
+			return false;
 		}
 
 		return true;
