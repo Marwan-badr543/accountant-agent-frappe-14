@@ -5,6 +5,6 @@ def get_data():
 		{
 			"module_name": "Accountant Agent",
 			"type": "module",
-			"label": _("Razyn")
+			"label": _("Razyyn")
 		}
 	]
