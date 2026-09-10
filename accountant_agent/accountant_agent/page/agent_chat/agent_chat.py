@@ -1153,7 +1153,12 @@ def _collapsible_question(spoken: str, questions: list, answer: str = "") -> str
 	if len(asked) > 1:
 		headline = _("{0} (and {1} more)").format(headline, len(asked) - 1)
 
-	body = "\n".join(f"{index}. {question}" for index, question in enumerate(asked[1:], 2))
+	# `question` is LLM-authored text (asked[1:] comes straight from the
+	# clarification payload), so it gets the same escape() treatment as
+	# `headline` (asked[0]) and the answer below — unescaped it is a stored
+	# XSS: this string is persisted verbatim into Agent Chat History.content
+	# and later rendered back through parse_markdown -> .html().
+	body = "\n".join(f"{index}. {escape(question)}" for index, question in enumerate(asked[1:], 2))
 
 	said = (answer or "").strip()
 	if said:

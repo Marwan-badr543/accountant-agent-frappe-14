@@ -62,24 +62,52 @@ frappe.pages['agent-chat'].on_page_load = function (wrapper) {
 							plotColor: '#10a37f'
 						}
 					},
-					securityLevel: 'loose'
+					// 'strict' (the marked/mermaid default) HTML-escapes text
+					// inside diagram labels instead of rendering it, closing
+					// the XSS path a diagram label built from LLM output would
+					// otherwise open. No code in this app relies on mermaid's
+					// loose-only click-bindings, so nothing here depends on
+					// 'loose'.
+					securityLevel: 'strict'
 				});
 			}
 		};
 		document.head.appendChild(script);
 	}
-	
-	// Dynamically load Chart.js from CDN
+
+	// Dynamically load Chart.js from CDN. Pinned version + Subresource
+	// Integrity so a compromised or MITM'd CDN response can't silently swap
+	// in different code.
 	if (!window.Chart) {
 		let script = document.createElement('script');
 		script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js';
+		script.integrity = 'sha384-dug+JxfBvklEQdJ4AYuBBAIScUz0bVN73xpy273gcAwHjb3qI0fXmuYNaNfdyYJG';
+		script.crossOrigin = 'anonymous';
 		document.head.appendChild(script);
 	}
 
-	// Dynamically load marked.js from CDN
+	// Dynamically load DOMPurify from CDN before marked.js. All markdown/HTML
+	// rendered from AI responses (chat_ui_manager.js parse_markdown) is piped
+	// through DOMPurify.sanitize() before it ever reaches a raw .html() call,
+	// so DOMPurify must be available before any message is rendered.
+	if (!window.DOMPurify) {
+		let script = document.createElement('script');
+		script.src = 'https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js';
+		script.integrity = 'sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a';
+		script.crossOrigin = 'anonymous';
+		document.head.appendChild(script);
+	}
+
+	// Dynamically load marked.js from CDN. Pinned to a specific release (the
+	// custom Renderer.code override below is compatible with the token-object
+	// signature marked has used since 5.x, and with the legacy (code, lang)
+	// signature) with Subresource Integrity, rather than tracking `latest`
+	// unpinned from an unauthenticated CDN.
 	if (!window.marked) {
 		let script = document.createElement('script');
-		script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+		script.src = 'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js';
+		script.integrity = 'sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi';
+		script.crossOrigin = 'anonymous';
 		script.onload = () => {
 			if (window.marked) {
 				const renderer = new window.marked.Renderer();

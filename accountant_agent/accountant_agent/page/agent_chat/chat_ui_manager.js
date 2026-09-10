@@ -1061,12 +1061,26 @@ class ChatUIManager {
 		});
 	}
 
+	// Every path out of this function passes through here. marked.js (and the
+	// raw-HTML fallback below it) can both be made to emit a <script>, an
+	// onerror=, or a javascript: URL from LLM-authored or attacker-supplied
+	// text, so nothing leaves this function without going through DOMPurify
+	// first. If DOMPurify has not finished loading yet, the marked branch is
+	// skipped entirely in favour of the escaped fallback rather than ever
+	// emitting marked's raw, unsanitized HTML.
+	sanitize_html(html) {
+		if (window.DOMPurify) {
+			return window.DOMPurify.sanitize(html);
+		}
+		return html;
+	}
+
 	parse_markdown(text) {
 		if (!text) return '';
 
-		if (window.marked) {
+		if (window.marked && window.DOMPurify) {
 			try {
-				return window.marked.parse(text);
+				return this.sanitize_html(window.marked.parse(text));
 			} catch (err) {
 				console.error("Marked parsing error:", err);
 			}
@@ -1189,7 +1203,7 @@ class ChatUIManager {
 		temp_output = temp_output.replace(/```(.*?)```/gs, '<pre><code>$1</code></pre>');
 		temp_output = temp_output.replace(/`(.*?)`/g, '<code>$1</code>');
 
-		return temp_output;
+		return this.sanitize_html(temp_output);
 	}
 
 	post_process_rendered_bubble(container) {
