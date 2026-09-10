@@ -151,7 +151,7 @@ _DENIED_COLUMN_PATTERNS: list[re.Pattern] = [
 	re.compile(pattern, re.IGNORECASE)
 	for pattern in [
 		r"\bapi_secret\b", r"\bencryption_key\b", r"\breset_password_key\b",
-		r"\bsocial_login_userid\b",
+		r"\bsocial_login_userid\b", r"\bapi_key\b",
 	]
 ]
 
